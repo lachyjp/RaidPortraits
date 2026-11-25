@@ -1,0 +1,39 @@
+RaidPortraits - INSTALLATION
+
+Using the CurseForge app: search for RaidPortraits and click Install. Done.
+
+INSTALLING BY HAND
+
+1. Close World of Warcraft.
+
+2. Extract the downloaded ZIP. Inside is a folder named RaidPortraits.
+
+3. Open your WoW Forever AddOns folder:
+   World of Warcraft\_forever_\Interface\AddOns\
+   Create the Interface and AddOns folders if they are missing.
+
+4. Copy the RaidPortraits folder into AddOns. The final path must be:
+   ...\Interface\AddOns\RaidPortraits\RaidPortraits.toc
+
+   Avoid an extra folder layer such as:
+   ...\Interface\AddOns\RaidPortraits-1.0.0\RaidPortraits\RaidPortraits.toc
+
+5. Start the game. On character selection, open AddOns and make sure
+   RaidPortraits is enabled.
+
+6. In game, open Edit Mode, select the party frames and tick
+   "Use Raid-Style Party Frames". Then type /rpt to open the designer.
+
+UPDATING
+
+Close the game and replace the RaidPortraits folder with the new one. Your
+settings live in the WTF folder and are kept.
+
+TROUBLESHOOTING
+
+No portraits: make sure raid-style party frames are on (step 6) and you're
+in a group, then type /rpt debug.
+Marked out of date after a patch: check for an update, or tick
+"Load out of date AddOns".
+Lua error: type /console scriptErrors 1, reproduce it, and report the first
+error together with the output of /rpt debug.

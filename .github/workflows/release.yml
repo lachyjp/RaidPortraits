@@ -1,0 +1,56 @@
+name: Release
+
+# Push a tag that matches the TOC version, e.g.  git tag v1.0.1 && git push origin v1.0.1
+# Or run it by hand (Actions > Release > Run workflow) to upload the current TOC version
+# to CurseForge again, e.g. after a failed upload. That skips the GitHub release if it exists.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches the addon version
+        run: |
+          version=$(grep -oP '^## Version:\s*\K\S+' RaidPortraits/RaidPortraits.toc)
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match TOC version $version"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "TAG=v$version" >> "$GITHUB_ENV"
+
+      - name: Package
+        run: python tools/package.py
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping"; exit 0
+          fi
+          python - <<'EOF' > release-notes.md
+          import re, os
+          v = os.environ["VERSION"]
+          text = open("RaidPortraits/CHANGELOG.md").read()
+          m = re.search(rf"^## {re.escape(v)}\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
+          print(m.group(1).strip() if m else f"RaidPortraits {v}")
+          EOF
+          gh release create "$TAG" "dist/RaidPortraits-$VERSION.zip" \
+            --title "RaidPortraits $VERSION" --notes-file release-notes.md
+
+      - name: Upload to CurseForge
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+        run: python tools/upload_curseforge.py
