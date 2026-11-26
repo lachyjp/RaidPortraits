@@ -384,6 +384,99 @@ local function FrameSize()
     return 72, 36
 end
 
+-- "All icons": every icon the game can put on a raid-style frame, at the
+-- game's default spots and sizes (DefaultCompactUnitFrameSetup), so you can
+-- see how much room the portrait and its extras have.
+local ICON_TEX = {
+    role = "Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES",
+    ready = "Interface\\RaidFrame\\ReadyCheck-Ready",
+    center = "Interface\\RaidFrame\\Raid-Icon-Rez",
+    buffs = { "Interface\\Icons\\Spell_Holy_WordFortitude", "Interface\\Icons\\Spell_Nature_Regeneration",
+              "Interface\\Icons\\Spell_Holy_MagicalSentry" },
+    debuffs = { "Interface\\Icons\\Spell_Shadow_ShadowWordPain", "Interface\\Icons\\Ability_Creature_Disease_02",
+                "Interface\\Icons\\Spell_Nature_CorrosiveBreath" },
+    dispel = { "Interface\\RaidFrame\\Raid-Icon-DebuffMagic", "Interface\\RaidFrame\\Raid-Icon-DebuffCurse",
+               "Interface\\RaidFrame\\Raid-Icon-DebuffPoison" },
+}
+
+local function IconTex(parent, file, crop)
+    local t = parent:CreateTexture(nil, "OVERLAY")
+    t:SetTexture(file)
+    if crop then t:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+    return t
+end
+
+local function BuildAllIcons(f)
+    local box = CreateFrame("Frame", nil, f)
+    box:SetAllPoints(f)
+    box:SetFrameLevel(f:GetFrameLevel() + 6)
+    local a = { box = box }
+    a.role = IconTex(box, ICON_TEX.role)
+    a.role:SetTexCoord(20 / 64, 39 / 64, 1 / 64, 20 / 64)   -- healer
+    a.ready = IconTex(box, ICON_TEX.ready)
+    a.center = IconTex(box, ICON_TEX.center)
+    a.buffs, a.debuffs, a.dispel = {}, {}, {}
+    for i = 1, 3 do
+        a.buffs[i] = IconTex(box, ICON_TEX.buffs[i], true)
+        a.debuffs[i] = IconTex(box, ICON_TEX.debuffs[i], true)
+        a.dispel[i] = IconTex(box, ICON_TEX.dispel[i])
+    end
+    a.hp = box:CreateFontString(nil, "OVERLAY")
+    f.allIcons = a
+    return a
+end
+
+local function LayoutAllIcons(f, fw, fh, on)
+    local a = f.allIcons or (on and BuildAllIcons(f))
+    if f.sampleAura then f.sampleAura:SetShown(not on) end
+    if not a then return end
+    a.box:SetShown(on)
+    f.name:ClearAllPoints()
+    if not on then
+        f.name:SetPoint("TOPLEFT", 3, -3)
+        f.name:SetPoint("RIGHT", -3, 0)
+        return
+    end
+    local scale = math.min(fh / 36, fw / 72)
+    local buff = 11 * scale
+    local role = 12 * scale
+    a.role:SetSize(role, role)
+    a.role:ClearAllPoints()
+    a.role:SetPoint("TOPLEFT", f, "TOPLEFT", 3, -2)
+    f.name:SetPoint("TOPLEFT", a.role, "TOPRIGHT", 1, -1)
+    f.name:SetPoint("RIGHT", -3, 0)
+    a.ready:SetSize(15 * scale, 15 * scale)
+    a.ready:ClearAllPoints()
+    a.ready:SetPoint("CENTER", f, "CENTER", -buff, 0)
+    a.center:SetSize(buff * 2, buff * 2)
+    a.center:ClearAllPoints()
+    a.center:SetPoint("CENTER", f, "CENTER", buff * 1.2, 0)
+    for i = 1, 3 do
+        local b, d, x = a.buffs[i], a.debuffs[i], a.dispel[i]
+        b:SetSize(buff, buff) d:SetSize(buff, buff) x:SetSize(buff, buff)
+        b:ClearAllPoints() d:ClearAllPoints() x:ClearAllPoints()
+        b:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -3 - (i - 1) * buff, 3)
+        d:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 3 + (i - 1) * buff, 3)
+        x:SetPoint("TOPRIGHT", f, "TOPRIGHT", -3 - (i - 1) * buff, -2)
+    end
+    local db = NS.db
+    local style = db.healthText
+    if style and style ~= "none" then
+        a.hp:SetFont(STANDARD_TEXT_FONT, db.healthTextSize or 10, db.healthTextOutline and "OUTLINE" or "")
+        local c = db.healthTextColor or { 1, 1, 1 }
+        a.hp:SetTextColor(c[1], c[2], c[3])
+        local p = ({ center = "CENTER", left = "LEFT", right = "RIGHT", bottom = "BOTTOM", top = "TOP" })[db.healthTextPos] or "CENTER"
+        a.hp:ClearAllPoints()
+        a.hp:SetPoint(p, f, p, 0, 0)
+        local sample = { full = "1234 / 2000", short = "1.2k / 2k", percent = "62%", shortpct = "1.2k | 62%",
+                         current = "1.2k", deficit = "-766" }
+        a.hp:SetText(sample[style] or "")
+        a.hp:Show()
+    else
+        a.hp:Hide()
+    end
+end
+
 local function BuildPreview(p)
     local box = CreateFrame("Frame", nil, p, "BackdropTemplate")
     box:SetPoint("TOPLEFT", CONTENT_X, -64)
@@ -404,6 +497,15 @@ local function BuildPreview(p)
     local cap = Label(box, "PREVIEW", "GameFontNormalSmall")
     cap:SetPoint("TOPLEFT", 10, -8)
     cap:SetTextColor(unpack(GOLD))
+
+    local iconsBtn = Button(box, "Show all icons", 90, function()
+        preview.allIcons = not preview.allIcons
+        NS.RefreshDesigner()
+    end)
+    iconsBtn:SetHeight(16)
+    iconsBtn:SetPoint("LEFT", cap, "RIGHT", 8, 0)
+    Tooltip(iconsBtn, "Show all icons", "Puts every icon the game can show on a party frame onto the preview at once, at the game's own spots and sizes: role, ready check, resurrect / summon, three buffs, three debuffs and three dispel types, plus your health numbers. Shows how much room your portrait has.")
+    preview.iconsBtn = iconsBtn
 
     -- Area the stand-in frames are fitted into (left of the controls).
     local stage = CreateFrame("Frame", nil, box)
@@ -437,6 +539,7 @@ local function BuildPreview(p)
             aura:SetPoint("BOTTOMRIGHT", -3, 3)
             aura:SetFrameLevel(f:GetFrameLevel() + 4)
             Backdrop(aura, { 0, 0, 0, 1 }, { 0.6, 0, 1, 1 })
+            f.sampleAura = aura
             local icon = aura:CreateTexture(nil, "ARTWORK")
             icon:SetPoint("TOPLEFT", 1, -1)
             icon:SetPoint("BOTTOMRIGHT", -1, 1)
@@ -572,7 +675,9 @@ local function RefreshPreview()
         end
         NS.PreviewPower(f.portrait, s.dead and 0 or (0.9 - i * 0.15), token)
         f.portrait:SetShown(db.enabled)
+        LayoutAllIcons(f, fw, fh, preview.allIcons and true or false)
     end
+    preview.iconsBtn:SetSelected(preview.allIcons and true or false)
     local list = {}
     for _, f in ipairs(preview.frames) do list[#list + 1] = f.portrait end
     NS.ArrangeColumn(list)

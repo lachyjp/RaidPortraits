@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.1
+
+- New health numbers on the party and raid frames, with six styles (Health bar > Health numbers).
+- New clean thin outlines for target and threat on the frames, drawn over the health bar without the corner pieces (on by default, under Highlight).
+- New option to centre the party frames in their Edit Mode box (Size & position > Party frames start from).
+- New "Show all icons" button in the preview, to see every icon the game can put on a frame.
+- New option to hide the game's white target outline on frames.
+- Fixed 3D portraits sometimes staying black after a player comes into view.
+- Fixed a Lua error when dragging the party frames in Edit Mode with your own frame hidden.
+
 ## 1.5.0
 
 - Fixed party frames sometimes getting stuck with a white border and faded colours after joining a group, until /reload. Hiding your own frame no longer hides and shows Blizzard's frames from add-on code, which broke their updates.

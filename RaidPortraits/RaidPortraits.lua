@@ -194,6 +194,11 @@ local function StyleHealth(frame)
     end
 end
 
+-- Health numbers on the frame (see HealthBars.lua).
+local function HealthText(frame)
+    if Kind(frame) then NS.UpdateHealthText(frame, UnitOf(frame), KindWanted(frame)) end
+end
+
 -- The "Party" / "Group N" labels above the frames. Only their alpha is
 -- changed (never shown/hidden), which add-ons may do even in combat.
 local function Titles()
@@ -264,18 +269,159 @@ local function ApplyOwnFrame(frame)
     end
 end
 
--- Blizzard's white target outline (selectionHighlight) can be left showing on a
--- frame that is no longer your target, e.g. after the group re-sorts, or when
--- another add-on (ForeverImmersion re-sets its alpha every frame) gets in the
--- way. Only ever hides it, never shows it, so Blizzard's own option still rules.
--- A texture has no scripts, so hiding it from here taints nothing.
-local function ClearStuckHighlight(frame)
+-- Clean outlines: the game's target (selectionHighlight) and threat
+-- (aggroHighlight) outlines are drawn from a texture with square nubs at the
+-- corners, under the health bar. With "cleanOutlines" on, we read what the
+-- game just decided (right after its own update, through hooks), hide its
+-- textures and draw plain thin edges of our own on top of the health bar.
+-- Textures have no scripts, so hiding them from here taints nothing.
+local outl = setmetatable({}, { __mode = "k" })
+local WHITE = "Interface\\Buttons\\WHITE8X8"
+
+local function NewEdges(parent)
+    local e = {}
+    for i = 1, 4 do
+        local t = parent:CreateTexture(nil, "OVERLAY", nil, 7)
+        t:SetTexture(WHITE)
+        e[i] = t
+    end
+    return e
+end
+
+local function PlaceEdges(e, box, inset, size)
+    local t, b, l, r = e[1], e[2], e[3], e[4]
+    for i = 1, 4 do e[i]:ClearAllPoints() end
+    t:SetPoint("TOPLEFT", box, "TOPLEFT", inset, -inset)
+    t:SetPoint("TOPRIGHT", box, "TOPRIGHT", -inset, -inset)
+    t:SetHeight(size)
+    b:SetPoint("BOTTOMLEFT", box, "BOTTOMLEFT", inset, inset)
+    b:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -inset, inset)
+    b:SetHeight(size)
+    l:SetPoint("TOPLEFT", t, "BOTTOMLEFT")
+    l:SetPoint("BOTTOMLEFT", b, "TOPLEFT")
+    l:SetWidth(size)
+    r:SetPoint("TOPRIGHT", t, "BOTTOMRIGHT")
+    r:SetPoint("BOTTOMRIGHT", b, "TOPRIGHT")
+    r:SetWidth(size)
+end
+
+local function ColorEdges(e, r, g, b, a)
+    for i = 1, 4 do e[i]:SetVertexColor(r, g, b, a or 1) end
+end
+
+local function Outline(frame)
+    local o = outl[frame]
+    if not o then o = {} outl[frame] = o end
+    return o
+end
+
+local function CleanWanted(frame)
+    return db.enabled and db.cleanOutlines and KindWanted(frame) and true or false
+end
+
+local function DrawOutlines(frame)
+    local o = outl[frame]
+    if not CleanWanted(frame) then
+        if o and o.box then o.box:Hide() end
+        return
+    end
+    o = Outline(frame)
+    if not o.box then
+        o.box = CreateFrame("Frame", nil, frame)
+        o.box:SetAllPoints(frame)
+        o.threat = CreateFrame("Frame", nil, o.box)
+        o.threat:SetAllPoints(o.box)
+        o.target = CreateFrame("Frame", nil, o.box)
+        o.target:SetAllPoints(o.box)
+        o.threatEdges = NewEdges(o.threat)
+        o.targetEdges = NewEdges(o.target)
+    end
+    local bar = frame.healthBar
+    o.box:SetFrameLevel(((bar and bar:GetFrameLevel()) or frame:GetFrameLevel()) + 4)
+    local size = db.outlineSize or 1
+    PlaceEdges(o.threatEdges, o.box, 0, size)
+    PlaceEdges(o.targetEdges, o.box, o.aggro and size or 0, size)
+    -- Threat: the game's own colour and alpha (either may be secret).
+    o.threat:SetShown(o.aggro and true or false)
+    if o.aggro then
+        if o.ar then pcall(ColorEdges, o.threatEdges, o.ar, o.ag, o.ab) end
+        if o.aa ~= nil then pcall(o.threat.SetAlpha, o.threat, o.aa) end
+    end
+    local c = db.outlineTargetColor or { 1, 1, 1 }
+    ColorEdges(o.targetEdges, c[1], c[2], c[3])
+    o.target:SetShown((o.sel and not db.hideGameOutline) and true or false)
+    o.box:Show()
+end
+NS.DrawOutlines = DrawOutlines
+
+-- After the game's selection update: remember its answer, then hide its texture.
+local function AfterSelection(frame, fromHook)
     local hl = rawget(frame, "selectionHighlight")
-    if type(hl) ~= "table" or not hl.IsShown or not hl:IsShown() then return end
-    local unit = UnitOf(frame)
-    local isTarget = unit and UnitIsUnit(unit, "target")
-    if Secret(isTarget) then return end
-    if not isTarget then hl:Hide() end
+    if type(hl) ~= "table" or not hl.IsShown then return end
+    if not fromHook and CleanWanted(frame) then
+        -- Not straight after the game's update: its texture may be one we hid,
+        -- so ask the game directly (keep the last answer while it's secret).
+        local unit = UnitOf(frame)
+        local isTarget = unit and UnitIsUnit(unit, "target")
+        if not Secret(isTarget) then Outline(frame).sel = isTarget and true or false end
+        if hl:IsShown() then hl:Hide() end
+        DrawOutlines(frame)
+        return
+    end
+    local o = outl[frame]
+    if not fromHook and o and o.sel and not hl:IsShown() and not (db.enabled and db.hideGameOutline) then
+        -- Clean outlines just turned off: give the game its outline back.
+        local unit = UnitOf(frame)
+        local isTarget = unit and UnitIsUnit(unit, "target")
+        if not Secret(isTarget) and isTarget then hl:Show() end
+        o.sel = nil
+    end
+    local shown = hl:IsShown()
+    if shown then
+        -- Guard against a stale outline on someone who isn't your target.
+        local unit = UnitOf(frame)
+        local isTarget = unit and UnitIsUnit(unit, "target")
+        if not Secret(isTarget) and not isTarget then shown = false hl:Hide() end
+    end
+    if CleanWanted(frame) then
+        Outline(frame).sel = shown
+        hl:Hide()
+    elseif shown and db.enabled and db.hideGameOutline then
+        hl:Hide()
+    end
+    DrawOutlines(frame)
+end
+
+local function AfterAggro(frame, fromHook)
+    local hl = rawget(frame, "aggroHighlight")
+    if type(hl) ~= "table" or not hl.IsShown then return end
+    -- Outside the game's update a hidden texture may be one we hid: only a
+    -- shown one is news.
+    if not fromHook and CleanWanted(frame) and not hl:IsShown() then DrawOutlines(frame) return end
+    if not CleanWanted(frame) then
+        local o = outl[frame]
+        if o and o.hidAggro then
+            -- Turned off: let the game's own outline show again on its next update.
+            o.hidAggro = nil
+            if o.aggro then hl:Show() end
+        end
+        DrawOutlines(frame)
+        return
+    end
+    local o = Outline(frame)
+    o.aggro = hl:IsShown()
+    if o.aggro then
+        o.ar, o.ag, o.ab = hl:GetVertexColor()
+        o.aa = hl:GetAlpha()
+        hl:Hide()
+        o.hidAggro = true
+    end
+    DrawOutlines(frame)
+end
+
+local function ClearStuckHighlight(frame)
+    AfterSelection(frame)
+    AfterAggro(frame)
 end
 
 local function RefreshAll(reload)
@@ -283,7 +429,7 @@ local function RefreshAll(reload)
     ForEachFrame(function(f)
         ApplyOwnFrame(f)
         Update(f, reload)
-        if Kind(f) then StyleHealth(f) ClearStuckHighlight(f) end
+        if Kind(f) then StyleHealth(f) ClearStuckHighlight(f) HealthText(f) end
     end)
 end
 NS.RefreshAll = RefreshAll
@@ -316,19 +462,39 @@ local layoutDir, touched = {}, {}   -- per group: "TOP" / "LEFT", and whether we
 -- that takes its slot.
 local PARK = -3000
 local slots = {}   -- per group: the first slot's anchor, remembered while member 1 is parked
+local applied = {} -- per group: the first slot we last set, when moved for centre / bottom
 
 local function Parked(m)
     local _, rel, _, x = m:GetPoint(1)
     return rel == UIParent and x == PARK
 end
 
+-- Edit Mode open: put every member back in Blizzard's own chain (nothing
+-- parked off screen), so dragging and snapping the party frames works on the
+-- layout the game expects. Re-applied when Edit Mode closes.
+local function EditModeOpen()
+    local m = _G.EditModeManagerFrame
+    if not m then return false end
+    if m.IsEditModeActive then
+        local ok, on = pcall(m.IsEditModeActive, m)
+        if ok then return on and true or false end
+    end
+    return m:IsShown() and true or false
+end
+NS.EditModeOpen = EditModeOpen
+
 local function Reflow(prefix, gap)
     local members = {}
     for i = 1, 5 do members[i] = _G[prefix .. i] end
     if not members[1] then return end
+    local editing = EditModeOpen()
     local hiding = false
-    for i = 1, 5 do if members[i] and selfHidden[members[i]] then hiding = true end end
-    if gap == 0 and not hiding and not touched[prefix] then return end
+    if not editing then
+        for i = 1, 5 do if members[i] and selfHidden[members[i]] then hiding = true end end
+    end
+    local anchor = (prefix == "CompactPartyFrameMember" and db.enabled and not editing) and db.partyAnchor or "start"
+    if anchor ~= "center" and anchor ~= "end" then anchor = "start" end
+    if gap == 0 and not hiding and anchor == "start" and not touched[prefix] then return end
     if InCombatLockdown() then spacingPending = true return end
 
     -- Blizzard stacks members TOP-to-BOTTOM or LEFT-to-RIGHT. Members we put
@@ -342,17 +508,41 @@ local function Reflow(prefix, gap)
     if not dir then return end
     layoutDir[prefix] = dir
 
+    -- Remember Blizzard's own first slot: not while member 1 is parked, and not
+    -- when it still carries a slot we moved (centre / bottom), or it would creep.
     if not Parked(members[1]) then
         local slot = { members[1]:GetPoint(1) }
-        if slot[1] then slots[prefix] = slot end
+        local a = applied[prefix]
+        local ours = a and slot[1] == a[1] and slot[2] == a[2] and slot[3] == a[3]
+            and math.abs((slot[4] or 0) - a[4]) < 0.5 and math.abs((slot[5] or 0) - a[5]) < 0.5
+        if slot[1] and not ours then slots[prefix] = slot end
     end
     local slot = slots[prefix]
     if not slot then return end
 
+    -- Centre / bottom: the box is sized for five, so move the first slot along
+    -- by the room the missing members would have taken.
+    if anchor ~= "start" then
+        local shown = 0
+        for i = 1, 5 do
+            local m = members[i]
+            if m and m:IsShown() and not (selfHidden[m] and not editing) then shown = shown + 1 end
+        end
+        local size = dir == "TOP" and members[1]:GetHeight() or members[1]:GetWidth()
+        local free = (5 - shown) * ((size or 0) + gap)
+        if shown > 0 and free > 0 then
+            if anchor == "center" then free = free / 2 end
+            free = math.floor(free + 0.5)
+            slot = { slot[1], slot[2], slot[3], slot[4] or 0, slot[5] or 0 }
+            if dir == "TOP" then slot[5] = slot[5] - free else slot[4] = slot[4] + free end
+        end
+    end
+    applied[prefix] = { slot[1], slot[2], slot[3], slot[4] or 0, slot[5] or 0 }
+
     local prev
     for i = 1, 5 do
         local m = members[i]
-        if m and selfHidden[m] then
+        if m and selfHidden[m] and not editing then
             m:ClearAllPoints()
             m:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", PARK, PARK)
         elseif m then
@@ -367,7 +557,7 @@ local function Reflow(prefix, gap)
             prev = m
         end
     end
-    touched[prefix] = gap > 0 or hiding
+    touched[prefix] = gap > 0 or hiding or anchor ~= "start"
 end
 
 local function SpaceParty()
@@ -383,6 +573,16 @@ NS.SpaceParty = SpaceParty
 ------------------------------------------------------------------------
 -- Hooks into Blizzard's compact frames
 ------------------------------------------------------------------------
+
+local editModeHooked = false
+function NS.HookEditMode()
+    local emf = _G.EditModeManagerFrame
+    if editModeHooked or not (emf and emf.HookScript) then return end
+    editModeHooked = true
+    local function later() if C_Timer and C_Timer.After then C_Timer.After(0, SpaceParty) else SpaceParty() end end
+    emf:HookScript("OnShow", later)
+    emf:HookScript("OnHide", later)
+end
 
 local function HookFrames()
     if CompactUnitFrame_SetUnit then
@@ -422,10 +622,31 @@ local function HookFrames()
             end)
         end
     end
+    -- The game shows its white target outline here; take it off again when
+    -- "Hide the game's target outline" is on (or it's stuck on a non-target).
+    if CompactUnitFrame_UpdateAggroHighlight then
+        hooksecurefunc("CompactUnitFrame_UpdateAggroHighlight", function(frame)
+            if frame and Kind(frame) then pcall(AfterAggro, frame, true) end
+        end)
+    end
+    if CompactUnitFrame_UpdateSelectionHighlight then
+        hooksecurefunc("CompactUnitFrame_UpdateSelectionHighlight", function(frame)
+            if frame and Kind(frame) then pcall(AfterSelection, frame, true) end
+        end)
+    end
     if CompactUnitFrame_UpdateHealth then
         hooksecurefunc("CompactUnitFrame_UpdateHealth", function(frame)
             if db.healthStyle and db.healthColorMode == "health" and frame and Kind(frame) then StyleHealth(frame) end
         end)
+    end
+    -- Health numbers follow every health, max health and status text update.
+    for _, fn in ipairs({ "CompactUnitFrame_UpdateHealth", "CompactUnitFrame_UpdateMaxHealth",
+                          "CompactUnitFrame_UpdateStatusText" }) do
+        if _G[fn] then
+            hooksecurefunc(fn, function(frame)
+                if frame and db.healthText ~= "none" then pcall(HealthText, frame) end
+            end)
+        end
     end
     if CompactRaidGroup_UpdateLayout then
         hooksecurefunc("CompactRaidGroup_UpdateLayout", function(frame)
@@ -442,6 +663,8 @@ local function HookFrames()
     if _G.CompactPartyFrame and CompactPartyFrame.RefreshMembers then
         hooksecurefunc(CompactPartyFrame, "RefreshMembers", function() SpaceParty() end)
     end
+    -- Edit Mode opening / closing: unpark / re-park your hidden frame.
+    NS.HookEditMode()
     -- Edit Mode's Opacity slider sets the container's alpha. Portraits follow
     -- it automatically, except when range fading is off (see NS.PortraitAlpha).
     for _, name in ipairs({ "CompactPartyFrame", "CompactRaidFrameContainer" }) do
@@ -500,6 +723,7 @@ local function ThreatAll()
 end
 
 function handlers.ADDON_LOADED(name)
+    if name == "Blizzard_EditMode" and db then NS.HookEditMode() end
     if name ~= ADDON then return end
     RaidPortraitsDB = RaidPortraitsDB or {}
     RaidPortraitsLooks = RaidPortraitsLooks or {}
@@ -533,7 +757,7 @@ function handlers.ADDON_LOADED(name)
         -- Safety net for your hidden frame: if any layout pass we don't hook put
         -- it back in the column (leaving an invisible row), close it up again.
         C_Timer.NewTicker(0.5, function()
-            if InCombatLockdown() then return end
+            if InCombatLockdown() or EditModeOpen() then return end
             for f in pairs(selfHidden) do
                 if f:IsShown() and not Parked(f) then SpaceParty() return end
             end
@@ -545,6 +769,11 @@ function handlers.ADDON_LOADED(name)
                     local vis = UnitIsVisible(P.unit)
                     if not Secret(vis) and (vis and true or false) ~= (P.kind == "3d") then
                         Update(frame, true)
+                    elseif P.kind == "3d" and P.model.GetModelFileID then
+                        -- A model asked for just as the player came into view can
+                        -- stay empty (a black square): ask again until it loads.
+                        local ok, id = pcall(P.model.GetModelFileID, P.model)
+                        if ok and not Secret(id) and (not id or id == 0) then Update(frame, true) end
                     end
                 end
             end
@@ -610,7 +839,7 @@ local function State(unit) ForUnit(unit, function(_, P) NS.UpdateUnitState(P, un
 local function StyleUnit(unit)
     if not unit or Secret(unit) then return end
     ForEachFrame(function(f)
-        if Kind(f) and UnitOf(f) == unit then StyleHealth(f) end
+        if Kind(f) and UnitOf(f) == unit then StyleHealth(f) HealthText(f) end
     end)
 end
 
@@ -689,12 +918,80 @@ local function Debug()
     if n == 0 then out("no raid-style party or raid frames found. Turn on \"Use Raid-Style Party Frames\" in Edit Mode.") end
 end
 
+-- /rpt layers: everything drawn on or over each visible party/raid frame, to
+-- find what tints a frame or draws an outline on it.
+local function Layers(only)
+    local out = function(s) DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffRPT|r " .. s) end
+    local function n2(v)
+        if Secret(v) then return "secret" end
+        return type(v) == "number" and ("%.2f"):format(v) or tostring(v)
+    end
+    local function Keys(f)
+        local k = {}
+        for key, v in pairs(f) do if type(v) == "table" and type(key) == "string" then k[v] = key end end
+        return k
+    end
+    local function Region(r, keys, indent)
+        if not (r.IsShown and r:IsShown()) or not r.IsObjectType or not r:IsObjectType("Texture") then return end
+        local a = r:GetAlpha()
+        if type(a) == "number" and not Secret(a) and a < 0.03 then return end
+        local layer = r:GetDrawLayer()
+        local cr, cg, cb, ca = r:GetVertexColor()
+        local w, h = r:GetSize()
+        if Secret(w) or Secret(h) then w, h = 0, 0 end
+        out(("%s%s %s blend=%s a=%s col=%s,%s,%s,%s size=%dx%d tex=%s ipa=%s"):format(indent,
+            keys[r] or r:GetName() or "?", tostring(layer), tostring(r:GetBlendMode()), n2(a),
+            n2(cr), n2(cg), n2(cb), n2(ca), math.floor((w or 0) + 0.5), math.floor((h or 0) + 0.5),
+            tostring(r:GetTexture()), tostring(r.IsIgnoringParentAlpha and r:IsIgnoringParentAlpha())))
+    end
+    local rects = {}
+    ForEachFrame(function(f)
+        if not (Kind(f) and f:IsShown() and UnitOf(f)) then return end
+        local unitName = UnitName(UnitOf(f))
+        if only and only ~= "" and not (Secret(unitName) or tostring(unitName):lower():find(only, 1, true)) then return end
+        local keys = Keys(f)
+        local ok, l, b, w, h = pcall(f.GetRect, f)
+        if ok and l and not (Secret(l) or Secret(b) or Secret(w) or Secret(h)) then rects[#rects + 1] = { f, l, b, w, h } end
+        out(("%s unit=%s name=%s alpha=%s eff=%s rect=%s,%s %sx%s"):format(f:GetName() or "?", tostring(UnitOf(f)),
+            tostring(UnitName(UnitOf(f))), n2(f:GetAlpha()), n2(f:GetEffectiveAlpha()), n2(l), n2(b), n2(w), n2(h)))
+        for _, r in ipairs({ f:GetRegions() }) do pcall(Region, r, keys, "  ") end
+        for _, c in ipairs({ f:GetChildren() }) do
+            if c:IsShown() then
+                local ck = Keys(c)
+                for _, r in ipairs({ c:GetRegions() }) do pcall(Region, r, ck, "  " .. (keys[c] or c:GetName() or "child") .. ".") end
+            end
+        end
+    end)
+    -- Other add-ons' frames lying over a party frame.
+    local f = EnumerateFrames()
+    while f do
+        if f:IsShown() and not (f.IsForbidden and f:IsForbidden()) and f.GetRect then
+            local ok, l, b, w, h = pcall(f.GetRect, f)
+            if ok and l and not (Secret(l) or Secret(b) or Secret(w) or Secret(h)) then
+                for _, r in ipairs(rects) do
+                    if f ~= r[1] and type(r[2]) == "number" and math.abs(l - r[2]) < 4 and math.abs(b - r[3]) < 4 and math.abs(w - r[4]) < 6
+                        and math.abs(h - r[5]) < 6 and f:GetParent() ~= r[1] then
+                        out(("over %s: %s a=%s strata=%s level=%s"):format(r[1]:GetName() or "?", f:GetName() or tostring(f),
+                            n2(f:GetEffectiveAlpha()), tostring(f:GetFrameStrata()), tostring(f:GetFrameLevel())))
+                    end
+                end
+            end
+        end
+        f = EnumerateFrames(f)
+    end
+end
+
 SLASH_RAIDPORTRAITS1 = "/raidportraits"
 SLASH_RAIDPORTRAITS2 = "/rpt"
 SlashCmdList.RAIDPORTRAITS = function(msg)
     local cmd = (msg or ""):lower():match("^%s*(%S*)")
     if cmd == "" then
         if NS.OpenDesigner then NS.OpenDesigner() end
+        return
+    end
+    if cmd == "layers" then
+        local ok, err = pcall(Layers, (msg or ""):lower():match("^%s*%S+%s+(%S+)"))
+        if not ok then Print("layers error: " .. tostring(err)) end
         return
     end
     if cmd == "debug" then

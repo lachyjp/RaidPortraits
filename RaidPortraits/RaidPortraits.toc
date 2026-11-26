@@ -2,7 +2,7 @@
 ## Title: RaidPortraits
 ## Notes: Character portraits for raid-style party frames: 3D models, 2D portraits or class icons, with a live-preview designer. Type /rpt.
 ## Author: lachy
-## Version: 1.5.0
+## Version: 1.5.1
 ## IconTexture: Interface\AddOns\RaidPortraits\Media\Logo
 ## Category: Unit Frames
 ## X-Curse-Project-ID: 1811227

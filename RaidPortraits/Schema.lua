@@ -20,6 +20,16 @@ local function Outside(db) return OUTSIDE[db.position] or false end
 local function IsColumn(db) return Outside(db) and db.arrange == "column" end
 NS.OUTSIDE = OUTSIDE
 
+NS.HEALTH_TEXT_STYLES = {
+    { "none", "Off" },
+    { "full", "Current / max (1234 / 2000)" },
+    { "short", "Short (1.2k / 2k)" },
+    { "percent", "Percent (62%)" },
+    { "shortpct", "Current and percent (1.2k | 62%)" },
+    { "current", "Current only (1.2k)" },
+    { "deficit", "Missing health (-760)" },
+}
+
 NS.SECTIONS = {
     { key = "general", label = "General", icon = "Interface\\Icons\\INV_Misc_Gear_01" },
     { key = "portrait", label = "Portrait", icon = "Interface\\Icons\\INV_Misc_Head_Human_01" },
@@ -82,6 +92,9 @@ NS.FIELDS = {
       tip = "Beside each frame: every portrait lines up with its own frame. Own column / row: portraits form their own line next to the party frames, with their own spacing and alignment. Raid frames always use Beside each frame." },
     { key = "spacing", section = "place", type = "range", label = "Spacing between party members", default = 0, min = 0, max = 40, step = 1,
       tip = "Moves the game's raid-style party frames apart and spaces the portraits by the same amount, so each portrait stays lined up with its frame. The game only lets add-ons move these frames out of combat: if your group changes during a fight, the spacing comes back when combat ends." },
+    { key = "partyAnchor", section = "place", type = "choice", label = "Party frames start from", default = "start",
+      choices = { { "start", "Top / left" }, { "center", "Centre" }, { "end", "Bottom / right" } },
+      tip = "Where the party sits inside the Party Frames box from Edit Mode. The box is sized for five, so with a smaller party Centre keeps the frames in the middle of it. Applied out of combat only, like the spacing. Edit Mode shows the game's own layout while it's open." },
     { key = "align", section = "place", type = "choice", label = "Line up portraits from", default = "start", cond = IsColumn,
       choices = { { "start", "Top / left" }, { "center", "Centre" }, { "end", "Bottom / right" } },
       tip = "Where the line of portraits starts against the party frames. With fewer players or smaller portraits, the line stays pinned to this end." },
@@ -126,6 +139,22 @@ NS.FIELDS = {
     { key = "healthBgColor", section = "health", type = "color", label = "Background colour", default = { 0.08, 0.08, 0.08 }, parent = "healthBg" },
     { key = "healthBgAlpha", section = "health", type = "range", label = "Background opacity", default = 0.9, min = 0, max = 1, step = 0.05, parent = "healthBg" },
 
+    -- Health numbers (on the game's frames; needs no restyling)
+    { key = "healthText", section = "health", type = "choice", label = "Health numbers", default = "none",
+      choices = NS.HEALTH_TEXT_STYLES,
+      tip = "Writes each player's health on their party / raid frame. Replaces the game's own health text while on. In combat the game may only allow the full numbers, so short and percent styles can show full numbers then." },
+    { key = "healthTextPos", section = "health", type = "choice", label = "Number position", default = "center",
+      choices = { { "center", "Centre" }, { "right", "Right" }, { "left", "Left" }, { "bottom", "Bottom" }, { "top", "Top" } },
+      cond = function(db) return db.healthText ~= "none" end },
+    { key = "healthTextSize", section = "health", type = "range", label = "Number size", default = 10, min = 6, max = 20, step = 1,
+      cond = function(db) return db.healthText ~= "none" end },
+    { key = "healthTextColor", section = "health", type = "color", label = "Number colour", default = { 1, 1, 1 },
+      cond = function(db) return db.healthText ~= "none" end },
+    { key = "healthTextOutline", section = "health", type = "toggle", label = "Outline the numbers", default = true,
+      cond = function(db) return db.healthText ~= "none" end },
+    { key = "healthTextHideFull", section = "health", type = "toggle", label = "Hide at full health", default = false,
+      cond = function(db) return db.healthText ~= "none" end },
+
     -- Resource bar
     { key = "power", section = "power", type = "toggle", label = "Show a resource bar (mana, energy, rage...)", default = false,
       tip = "A small bar on each portrait showing the player's main resource. The game's own raid frames can also show power bars: Raid Frame Settings > Display Power Bars." },
@@ -167,6 +196,12 @@ NS.FIELDS = {
       choices = { { "top", "Top" }, { "center", "Middle" }, { "bottom", "Bottom" } } },
 
     -- Target highlight
+    { key = "cleanOutlines", section = "highlight", type = "toggle", label = "Clean thin outlines on frames", default = true,
+      tip = "Replaces the game's target (white) and threat (yellow / orange / red) outlines on the party and raid frames with plain thin lines drawn on top of the health bar, without the square corner pieces." },
+    { key = "outlineSize", section = "highlight", type = "range", label = "Frame outline thickness", default = 1, min = 1, max = 4, step = 1, parent = "cleanOutlines" },
+    { key = "outlineTargetColor", section = "highlight", type = "color", label = "Target outline colour", default = { 1, 1, 1 }, parent = "cleanOutlines" },
+    { key = "hideGameOutline", section = "highlight", type = "toggle", label = "Hide the game's white target outline on frames", default = false,
+      tip = "The party and raid frames draw a white outline around your target. Turn this on to keep only the portrait outline below." },
     { key = "targetHighlight", section = "highlight", type = "toggle", label = "Outline the portrait of your target", default = true },
     { key = "targetSize", section = "highlight", type = "range", label = "Outline thickness", default = 2, min = 1, max = 8, step = 1, parent = "targetHighlight" },
     { key = "targetColor", section = "highlight", type = "color", label = "Outline colour", default = { 1, 0.82, 0 }, parent = "targetHighlight" },

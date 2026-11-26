@@ -10,6 +10,7 @@ NS.version = (getMeta and getMeta(ADDON, "Version")) or "0"
 
 -- One short line per release. Shown once, on the first login after updating.
 NS.whatsNew = {
+    ["1.5.1"] = "Health numbers, clean thin outlines and centred party frames are in /rpt. Also fixes black 3D portraits.",
     ["1.5.0"] = "Fixed party frames getting stuck with a white border or faded colours after joining a group, and the empty row left when your own frame is hidden.",
 }
 
